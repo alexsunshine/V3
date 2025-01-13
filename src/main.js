@@ -10,7 +10,37 @@ class AudioVisualizer {
   }
 
   setupUI() {
-    // ... (código UI sin cambios)
+    const app = document.getElementById('app');
+    app.innerHTML = `
+      <div class="min-h-screen bg-gray-900 p-8">
+        <div class="max-w-4xl mx-auto">
+          <h1 class="text-4xl font-bold text-white mb-8">Visualizador de Sonido a Color</h1>
+          
+          <div class="mb-8">
+            <button id="startBtn" class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded mr-4">
+              Iniciar Micrófono
+            </button>
+            <button id="recordBtn" class="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded" disabled>
+              Grabar
+            </button>
+          </div>
+
+          <div class="bg-white rounded-lg p-8 mb-8">
+            <div id="currentColor" class="w-full h-64 rounded-lg border-4 border-gray-200 transition-all duration-200"></div>
+          </div>
+
+          <div id="timeline" class="h-32 bg-gray-800 rounded-lg overflow-x-auto whitespace-nowrap p-4"></div>
+        </div>
+      </div>
+    `;
+
+    this.startBtn = document.getElementById('startBtn');
+    this.recordBtn = document.getElementById('recordBtn');
+    this.currentColor = document.getElementById('currentColor');
+    this.timelineEl = document.getElementById('timeline');
+
+    this.startBtn.addEventListener('click', () => this.startAudio());
+    this.recordBtn.addEventListener('click', () => this.toggleRecording());
   }
 
   async setupAudioAnalysis() {
@@ -18,23 +48,36 @@ class AudioVisualizer {
     this.meter = new Tone.Meter();
   }
 
+  async startAudio() {
+    try {
+      await Tone.start();
+      const mic = new Tone.UserMedia();
+      await mic.open();
+      
+      mic.connect(this.analyzer);
+      mic.connect(this.meter);
+
+      this.startBtn.disabled = true;
+      this.recordBtn.disabled = false;
+      this.startAnalysis();
+    } catch (error) {
+      console.error('Error al acceder al micrófono:', error);
+      alert('No se pudo acceder al micrófono. Por favor, permite el acceso al micrófono y recarga la página.');
+    }
+  }
+
   frequencyToWavelength(frequency) {
-    // Velocidad del sonido en el aire (m/s)
     const speedOfSound = 343;
     return speedOfSound / frequency;
   }
 
-  // Convierte una longitud de onda de sonido a una "longitud de onda" equivalente en el espectro visible
   soundToLightWavelength(soundWavelength) {
-    // El espectro visible va aproximadamente de 380nm a 750nm
-    // Mapearemos las frecuencias audibles (20Hz - 20kHz) a este rango
-    const minSoundWL = this.frequencyToWavelength(20000); // ~0.01715m
-    const maxSoundWL = this.frequencyToWavelength(20);    // ~17.15m
+    const minSoundWL = this.frequencyToWavelength(20000);
+    const maxSoundWL = this.frequencyToWavelength(20);
     
-    const minLightWL = 380;  // nanómetros
-    const maxLightWL = 750;  // nanómetros
+    const minLightWL = 380;
+    const maxLightWL = 750;
     
-    // Mapeo logarítmico para una distribución más natural
     const logSoundWL = Math.log(soundWavelength);
     const logMinSoundWL = Math.log(minSoundWL);
     const logMaxSoundWL = Math.log(maxSoundWL);
@@ -76,7 +119,6 @@ class AudioVisualizer {
       b = 0;
     }
 
-    // Ajustar la intensidad en los extremos del espectro
     let factor = 1;
     if (wavelength > 700) {
       factor = 0.3 + 0.7 * (750 - wavelength) / (750 - 700);
@@ -100,9 +142,8 @@ class AudioVisualizer {
   startAnalysis() {
     const analyzeFrame = () => {
       const frequencyData = this.analyzer.getValue();
-      const volume = this.meter.getValue() + 100; // Normalizar el volumen
+      const volume = this.meter.getValue();
       
-      // Encontrar todas las frecuencias significativas
       const nyquist = Tone.context.sampleRate / 2;
       const threshold = -60;
       let totalEnergy = 0;
@@ -112,7 +153,7 @@ class AudioVisualizer {
         const amplitude = frequencyData[i];
         if (amplitude > threshold) {
           const frequency = (i * nyquist) / frequencyData.length;
-          const weight = Math.pow(10, amplitude / 20); // Convertir dB a escala lineal
+          const weight = Math.pow(10, amplitude / 20);
           totalEnergy += weight;
           
           const color = this.frequencyToColor(frequency, amplitude);
@@ -122,15 +163,15 @@ class AudioVisualizer {
         }
       }
 
-      // Normalizar el color resultante
       if (totalEnergy > 0) {
         weightedColor.r = Math.round(weightedColor.r / totalEnergy);
         weightedColor.g = Math.round(weightedColor.g / totalEnergy);
         weightedColor.b = Math.round(weightedColor.b / totalEnergy);
       }
 
-      // Ajustar la intensidad según el volumen
-      const factor = Math.min(Math.max(volume / 100, 0), 1);
+      // Ajustar la intensidad según el volumen (normalizado entre 0 y 1)
+      const normalizedVolume = (volume + 100) / 100;
+      const factor = Math.min(Math.max(normalizedVolume, 0), 1);
       const finalColor = `rgba(${weightedColor.r}, ${weightedColor.g}, ${weightedColor.b}, ${factor})`;
       
       this.currentColor.style.backgroundColor = finalColor;
@@ -149,7 +190,30 @@ class AudioVisualizer {
     analyzeFrame();
   }
 
-  // ... (resto del código sin cambios)
+  toggleRecording() {
+    this.isRecording = !this.isRecording;
+    this.recordBtn.textContent = this.isRecording ? 'Detener Grabación' : 'Grabar';
+    this.recordBtn.classList.toggle('bg-red-500');
+    this.recordBtn.classList.toggle('bg-gray-500');
+
+    if (!this.isRecording) {
+      this.timeline = [];
+      this.updateTimeline();
+    }
+  }
+
+  updateTimeline() {
+    this.timelineEl.innerHTML = this.timeline
+      .map(entry => `
+        <div 
+          class="inline-block w-8 h-full mx-1 rounded-sm" 
+          style="background-color: ${entry.color}"
+        ></div>
+      `)
+      .join('');
+    
+    this.timelineEl.scrollLeft = this.timelineEl.scrollWidth;
+  }
 }
 
 // Inicializar la aplicación
